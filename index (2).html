@@ -1,0 +1,1442 @@
+        const exclusions = new Set(['WATER', 'AEA', 'MRWR', 'H.S.1 HOUR', 'RETARDER', 'AIR', 'WTR', 'HOT WATER', 'CHILL WATER', 'ADM', 'MICAFIBERS', 'ACCELGUARD']);
+        
+        return batchData
+            .map(row => ({
+                ...row,
+                normalizedMaterial: this.normalizeMaterialName(row['Material name'])
+            }))
+            .filter(row => {
+                return row.UOM === 'LB' && !exclusions.has(row.normalizedMaterial);
+            })
+            .map(row => {
+                const ticketInfo = ticketMap.get(row['Ticket number']);
+                const ticketDate = this.parseDate(ticketInfo?.date);
+                const target = parseFloat(row.Target) || 0;
+                const actual = parseFloat(row.Actual) || 0;
+                const errorPercent = target !== 0 ? ((actual - target) / target) * 100 : 0;
+                
+                return {
+                    ...row,
+                    ticketDate,
+                    target,
+                    actual,
+                    errorPercent,
+                    region: regionName,
+                    plant: ticketInfo?.plant || 'Unknown Plant',
+                    monthYear: this.getMonthYear(ticketDate),
+                    weekStart: this.getWeekStart(ticketDate),
+                    status: this.categorizeError(errorPercent)
+                };
+            })
+            .filter(row => row.ticketDate && !isNaN(row.ticketDate.getTime()))
+            .filter(row => Math.abs(row.errorPercent) <= 10); // Remove extreme outliers
+    }
+    
+    normalizeMaterialName(name) {
+        if (typeof name !== 'string') return '';
+        const normalized = name.trim().toUpperCase();
+        const replacements = {
+            'PORTLAND CEMENT': 'CEMENT',
+            '30S CONCRETE STO': 'CSAND',
+            'CONC SAND': 'CSAND'
+        };
+        return replacements[normalized] || normalized;
+    }
+    
+    parseDate(dateValue) {
+        if (typeof dateValue === 'number') {
+            return new Date(Date.UTC(0, 0, dateValue - 1));
+        }
+        return new Date(dateValue);
+    }
+    
+    getMonthYear(date) {
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }
+    
+    getWeekStart(date) {
+        const d = new Date(date);
+        const day = d.getDay();
+        const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+        return new Date(d.setDate(diff)).toISOString().split('T')[0];
+    }
+    
+    categorizeError(error) {
+        if (error <= 0 && error >= -1) return 'optimal';
+        if (error > 0 && error <= 1) return 'good';
+        if (error < -1) return 'risk';
+        if (error > 1) return 'waste';
+        return 'good';
+    }
+    
+    updateMasterLists() {
+        this.materials.clear();
+        this.regions.clear();
+        this.plants.clear();
+        this.months.clear();
+        
+        this.data.forEach(item => {
+            this.materials.add(item.normalizedMaterial);
+            this.regions.add(item.region);
+            this.plants.add(item.plant);
+            this.months.add(item.monthYear);
+        });
+        
+        this.selectedMaterials = Array.from(this.materials);
+        this.selectedRegions = Array.from(this.regions);
+        this.selectedPlants = Array.from(this.plants);
+        this.selectedMonth = Array.from(this.months).sort().pop() || '';
+        
+        this.updateFilters();
+    }
+    
+    updateFilters() {
+        const filtersDiv = document.getElementById('filters');
+        const filterSections = document.getElementById('filter-sections');
+        
+        filtersDiv.classList.remove('hidden');
+        filterSections.innerHTML = '';
+        
+        // Month filter
+        if (this.months.size > 0) {
+            const monthSection = this.createFilterSection('Month', Array.from(this.months).sort().reverse(), this.selectedMonth, 'month', true);
+            filterSections.appendChild(monthSection);
+        }
+        
+        // Other filters
+        if (this.regions.size > 0) {
+            const regionSection = this.createFilterSection('Regions', Array.from(this.regions).sort(), this.selectedRegions, 'regions');
+            filterSections.appendChild(regionSection);
+        }
+        
+        if (this.plants.size > 0) {
+            const plantSection = this.createFilterSection('Plants', Array.from(this.plants).sort(), this.selectedPlants, 'plants');
+            filterSections.appendChild(plantSection);
+        }
+        
+        if (this.materials.size > 0) {
+            const materialSection = this.createFilterSection('Materials', Array.from(this.materials).sort(), this.selectedMaterials, 'materials');
+            filterSections.appendChild(materialSection);
+        }
+        
+        this.updateFilterTags();
+    }
+    
+    createFilterSection(title, items, selected, type, isSelect = false) {
+        const section = document.createElement('div');
+        section.className = 'glass-dark rounded-xl p-4';
+        
+        const header = document.createElement('h4');
+        header.className = 'font-medium text-white mb-3';
+        header.textContent = title;
+        section.appendChild(header);
+        
+        if (isSelect) {
+            const select = document.createElement('select');
+            select.className = 'w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white';
+            
+            items.forEach(item => {
+                const option = document.createElement('option');
+                option.value = item;
+                option.textContent = item;
+                option.selected = selected === item;
+                option.className = 'text-gray-800';
+                select.appendChild(option);
+            });
+            
+            select.addEventListener('change', () => {
+                if (type === 'month') {
+                    this.selectedMonth = select.value;
+                }
+                this.updateVisualizations();
+                this.updateFilterTags();
+            });
+            
+            section.appendChild(select);
+        } else {
+            const buttons = document.createElement('div');
+            buttons.className = 'flex space-x-2 mb-3';
+            
+            const selectAll = document.createElement('button');
+            selectAll.className = 'flex-1 bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded-lg text-sm transition-colors';
+            selectAll.textContent = 'All';
+            selectAll.addEventListener('click', () => {
+                if (type === 'regions') this.selectedRegions = Array.from(this.regions);
+                if (type === 'plants') this.selectedPlants = Array.from(this.plants);
+                if (type === 'materials') this.selectedMaterials = Array.from(this.materials);
+                this.updateFilters();
+                this.updateVisualizations();
+            });
+            
+            const selectNone = document.createElement('button');
+            selectNone.className = 'flex-1 bg-white/10 hover:bg-white/20 text-white px-3 py-1 rounded-lg text-sm transition-colors';
+            selectNone.textContent = 'None';
+            selectNone.addEventListener('click', () => {
+                if (type === 'regions') this.selectedRegions = [];
+                if (type === 'plants') this.selectedPlants = [];
+                if (type === 'materials') this.selectedMaterials = [];
+                this.updateFilters();
+                this.updateVisualizations();
+            });
+            
+            buttons.appendChild(selectAll);
+            buttons.appendChild(selectNone);
+            section.appendChild(buttons);
+            
+            const itemsContainer = document.createElement('div');
+            itemsContainer.className = 'space-y-2 max-h-32 overflow-y-auto';
+            
+            items.forEach(item => {
+                const label = document.createElement('label');
+                label.className = 'flex items-center space-x-2 cursor-pointer hover:bg-white/5 rounded p-1 transition-colors';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.className = 'rounded border-white/30 bg-white/10 text-blue-500';
+                checkbox.checked = selected.includes(item);
+                
+                checkbox.addEventListener('change', () => {
+                    let targetArray;
+                    if (type === 'regions') targetArray = this.selectedRegions;
+                    if (type === 'plants') targetArray = this.selectedPlants;
+                    if (type === 'materials') targetArray = this.selectedMaterials;
+                    
+                    if (checkbox.checked) {
+                        if (!targetArray.includes(item)) targetArray.push(item);
+                    } else {
+                        const index = targetArray.indexOf(item);
+                        if (index > -1) targetArray.splice(index, 1);
+                    }
+                    
+                    this.updateVisualizations();
+                    this.updateFilterTags();
+                });
+                
+                const span = document.createElement('span');
+                span.className = 'text-white/90 text-sm';
+                span.textContent = item;
+                
+                label.appendChild(checkbox);
+                label.appendChild(span);
+                itemsContainer.appendChild(label);
+            });
+            
+            section.appendChild(itemsContainer);
+        }
+        
+        return section;
+    }
+    
+    updateFilterTags() {
+        const filterTags = document.getElementById('filter-tags');
+        filterTags.innerHTML = '';
+        
+        const tags = [
+            { label: `Month: ${this.selectedMonth}`, type: 'month' },
+            { label: `Regions: ${this.selectedRegions.length}`, type: 'regions' },
+            { label: `Plants: ${this.selectedPlants.length}`, type: 'plants' },
+            { label: `Materials: ${this.selectedMaterials.length}`, type: 'materials' }
+        ];
+        
+        tags.forEach(tag => {
+            const tagElement = document.createElement('span');
+            tagElement.className = 'filter-tag';
+            tagElement.textContent = tag.label;
+            filterTags.appendChild(tagElement);
+        });
+    }
+    
+    filterData() {
+        this.filteredData = this.data.filter(item => 
+            this.selectedRegions.includes(item.region) &&
+            this.selectedPlants.includes(item.plant) &&
+            this.selectedMaterials.includes(item.normalizedMaterial) &&
+            item.monthYear === this.selectedMonth
+        );
+    }
+    
+    updateVisualizations() {
+        this.filterData();
+        this.updateMetricCards();
+        this.updateCharts();
+        this.updateTable();
+        this.updateDashboardSubtitle();
+    }
+    
+    updateDashboardSubtitle() {
+        const subtitle = document.getElementById('dashboard-subtitle');
+        if (this.filteredData.length > 0) {
+            const uniquePlants = new Set(this.filteredData.map(d => d.plant)).size;
+            subtitle.textContent = `${this.filteredData.length.toLocaleString()} batches • ${uniquePlants} plants • ${this.selectedMonth}`;
+        }
+    }
+    
+    updateMetricCards() {
+        const metricCards = document.getElementById('metric-cards');
+        metricCards.innerHTML = '';
+        
+        if (this.filteredData.length === 0) {
+            metricCards.innerHTML = '<p class="col-span-full text-center text-white/60">No data matches current filters</p>';
+            return;
+        }
+        
+        const stats = this.calculateStats();
+        
+        const cards = [
+            {
+                title: 'Total Batches',
+                value: stats.totalBatches.toLocaleString(),
+                icon: '📊',
+                color: this.colors.primary,
+                subtitle: `Across ${new Set(this.filteredData.map(d => d.plant)).size} plants`
+            },
+            {
+                title: 'Average Error',
+                value: `${stats.avgError.toFixed(2)}%`,
+                icon: '🎯',
+                color: Math.abs(stats.avgError) > 1 ? this.colors.waste : this.colors.optimal,
+                subtitle: stats.avgError > 0 ? 'Over target' : 'Under target'
+            },
+            {
+                title: 'Optimal Batches',
+                value: `${((stats.optimal / stats.totalBatches) * 100).toFixed(1)}%`,
+                icon: '✅',
+                color: this.colors.optimal,
+                subtitle: `${stats.optimal} batches`
+            },
+            {
+                title: 'Risk/Waste',
+                value: `${(((stats.risk + stats.waste) / stats.totalBatches) * 100).toFixed(1)}%`,
+                icon: '⚠️',
+                color: this.colors.waste,
+                subtitle: `${stats.risk + stats.waste} batches`
+            }
+        ];
+        
+        cards.forEach(card => {
+            const cardElement = document.createElement('div');
+            cardElement.className = 'metric-card rounded-2xl p-6 animate-slide-up';
+            cardElement.style.borderLeftColor = card.color;
+            
+            cardElement.innerHTML = `
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-2xl">${card.icon}</span>
+                    <span class="text-2xl font-bold" style="color: ${card.color}">${card.value}</span>
+                </div>
+                <h3 class="font-semibold text-gray-800 mb-1">${card.title}</h3>
+                <p class="text-sm text-gray-600">${card.subtitle}</p>
+            `;
+            
+            metricCards.appendChild(cardElement);
+        });
+    }
+    
+    calculateStats() {
+        const statusCounts = _.countBy(this.filteredData, 'status');
+        const avgError = _.sumBy(this.filteredData, 'errorPercent') / this.filteredData.length;
+        
+        return {
+            totalBatches: this.filteredData.length,
+            avgError,
+            optimal: statusCounts.optimal || 0,
+            good: statusCounts.good || 0,
+            risk: statusCounts.risk || 0,
+            waste: statusCounts.waste || 0
+        };
+    }
+    
+    updateCharts() {
+        this.updateTrendChart();
+        this.updateDistributionChart();
+        this.updateMaterialChart();
+    }
+    
+    updateTrendChart() {
+        const ctx = document.getElementById('trend-chart').getContext('2d');
+        
+        if (this.charts.trend) {
+            this.charts.trend.destroy();
+        }
+        
+        const weeklyData = _.groupBy(this.filteredData, 'weekStart');
+        const weeks = Object.keys(weeklyData).sort();
+        
+        const datasets = [];
+        
+        // Smart grouping based on number of plants
+        if (this.selectedPlants.length <= 4) {
+            // Show individual plants when <= 4
+            const plantColors = this.generateColorPalette(this.selectedPlants.length);
+            
+            this.selectedPlants.forEach((plant, index) => {
+                const plantData = weeks.map(week => {
+                    const weekBatches = weeklyData[week]?.filter(b => b.plant === plant) || [];
+                    return weekBatches.length > 0 ? 
+                        _.sumBy(weekBatches, 'errorPercent') / weekBatches.length : null;
+                });
+                
+                // Clean plant names - remove region prefix and plant numbers
+                const cleanPlantName = plant
+                    .replace(/PLANT \d+ - /gi, '')
+                    .replace(/\(\d+\)/g, '')
+                    .trim();
+                
+                datasets.push({
+                    label: cleanPlantName,
+                    data: plantData,
+                    borderColor: plantColors[index],
+                    backgroundColor: plantColors[index] + '20',
+                    borderWidth: 3,
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 4,
+                    pointHoverRadius: 6
+                });
+            });
+        } else {
+            // Group by region when > 4 plants
+            const regionData = {};
+            
+            // First, collect all batches by region
+            this.filteredData.forEach(batch => {
+                let region = batch.region || 'Unknown';
+                
+                // Clean up region names
+                region = region.trim().toUpperCase();
+                if (region.includes('ALLIED')) region = 'ALLIED';
+                if (region.includes('RK HALL') || region.includes('HALL')) region = 'RK HALL';
+                
+                if (!regionData[region]) {
+                    regionData[region] = {};
+                }
+                
+                const week = batch.weekStart;
+                if (!regionData[region][week]) {
+                    regionData[region][week] = [];
+                }
+                
+                regionData[region][week].push(batch.errorPercent);
+            });
+            
+            // Create datasets for each region
+            const regionColors = this.generateColorPalette(Object.keys(regionData).length);
+            
+            Object.keys(regionData).forEach((region, index) => {
+                const regionWeeklyAvg = weeks.map(week => {
+                    const weekErrors = regionData[region][week];
+                    return weekErrors && weekErrors.length > 0 ? 
+                        _.sum(weekErrors) / weekErrors.length : null;
+                });
+                
+                datasets.push({
+                    label: `${region} Region`,
+                    data: regionWeeklyAvg,
+                    borderColor: regionColors[index],
+                    backgroundColor: regionColors[index] + '20',
+                    borderWidth: 4,
+                    tension: 0.4,
+                    fill: false,
+                    pointRadius: 5,
+                    pointHoverRadius: 8
+                });
+            });
+        }
+        
+        // Calculate dynamic Y-axis range
+        const allValues = datasets.flatMap(d => d.data.filter(v => v !== null));
+        const minValue = Math.min(...allValues);
+        const maxValue = Math.max(...allValues);
+        const range = Math.max(Math.abs(minValue), Math.abs(maxValue));
+        const padding = range * 0.2; // 20% padding
+        
+        this.charts.trend = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: weeks.map(week => {
+                    // Format week labels to be more readable
+                    const date = new Date(week);
+                    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+                }),
+                datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 20,
+                            font: {
+                                size: 12
+                            }
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        titleColor: 'white',
+                        bodyColor: 'white',
+                        borderColor: 'rgba(255,255,255,0.2)',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                if (value === null) return null;
+                                return `${context.dataset.label}: ${value.toFixed(2)}%`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Average Error %',
+                            font: { weight: 'bold' }
+                        },
+                        min: Math.min(-1, minValue - padding),
+                        max: Math.max(1, maxValue + padding),
+                        ticks: {
+                            callback: value => `${value.toFixed(1)}%`,
+                            stepSize: 0.1
+                        },
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)',
+                            drawBorder: true
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Week Starting',
+                            font: { weight: 'bold' }
+                        },
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    updateDistributionChart() {
+        const ctx = document.getElementById('distribution-chart').getContext('2d');
+        
+        if (this.charts.distribution) {
+            this.charts.distribution.destroy();
+        }
+        
+        const plantStats = {};
+        this.selectedPlants.forEach(plant => {
+            const plantBatches = this.filteredData.filter(b => b.plant === plant);
+            const statusCounts = _.countBy(plantBatches, 'status');
+            const total = plantBatches.length;
+            
+            if (total > 0) {
+                plantStats[plant] = {
+                    optimal: (statusCounts.optimal || 0) / total * 100,
+                    good: (statusCounts.good || 0) / total * 100,
+                    risk: (statusCounts.risk || 0) / total * 100,
+                    waste: (statusCounts.waste || 0) / total * 100,
+                    total: total
+                };
+            }
+        });
+        
+        const plants = Object.keys(plantStats);
+        
+        // Clean plant names for display
+        const cleanPlantNames = plants.map(plant => 
+            plant.replace(/PLANT \d+ - /gi, '').replace(/\(\d+\)/g, '').trim()
+        );
+        
+        const datasets = [
+            {
+                label: 'Optimal',
+                data: plants.map(plant => plantStats[plant].optimal),
+                backgroundColor: this.colors.optimal
+            },
+            {
+                label: 'Good',
+                data: plants.map(plant => plantStats[plant].good),
+                backgroundColor: this.colors.good
+            },
+            {
+                label: 'Risk',
+                data: plants.map(plant => plantStats[plant].risk),
+                backgroundColor: this.colors.risk
+            },
+            {
+                label: 'Waste',
+                data: plants.map(plant => plantStats[plant].waste),
+                backgroundColor: this.colors.waste
+            }
+        ];
+        
+        this.charts.distribution = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: cleanPlantNames,
+                datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    x: { 
+                        stacked: true,
+                        title: {
+                            display: true,
+                            text: 'Plants',
+                            font: { weight: 'bold' }
+                        }
+                    },
+                    y: { 
+                        stacked: true,
+                        title: {
+                            display: true,
+                            text: 'Percentage of Batches',
+                            font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            callback: value => `${value.toFixed(0)}%`
+                        },
+                        grid: {
+                            color: 'rgba(0,0,0,0.1)'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            usePointStyle: true,
+                            padding: 15
+                        }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(0,0,0,0.8)',
+                        titleColor: 'white',
+                        bodyColor: 'white',
+                        borderColor: 'rgba(255,255,255,0.2)',
+                        borderWidth: 1,
+                        cornerRadius: 8,
+                        callbacks: {
+                            title: function(context) {
+                                const plantIndex = context[0].dataIndex;
+                                const originalPlant = plants[plantIndex];
+                                const total = plantStats[originalPlant].total;
+                                return `${context[0].label} (${total} batches)`;
+                            },
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                const plantIndex = context.dataIndex;
+                                const originalPlant = plants[plantIndex];
+                                const total = plantStats[originalPlant].total;
+                                const count = Math.round((value / 100) * total);
+                                return `${context.dataset.label}: ${value.toFixed(1)}% (${count} batches)`;
+                            }
+                        }
+                    },
+                    datalabels: false
+                },
+                onHover: function(event, activeElements) {
+                    event.native.target.style.cursor = activeElements.length > 0 ? 'pointer' : 'default';
+                }
+            },
+            plugins: [{
+                id: 'percentageLabels',
+                afterDatasetsDraw: function(chart) {
+                    const ctx = chart.ctx;
+                    
+                    chart.data.datasets.forEach((dataset, datasetIndex) => {
+                        const meta = chart.getDatasetMeta(datasetIndex);
+                        
+                        meta.data.forEach((bar, index) => {
+                            const value = dataset.data[index];
+                            
+                            if (value >= 5) {
+                                const x = bar.x;
+                                const y = bar.y + (bar.height / 2);
+                                
+                                ctx.save();
+                                ctx.fillStyle = '#ffffff';
+                                ctx.font = 'bold 12px Inter, sans-serif';
+                                ctx.textAlign = 'center';
+                                ctx.textBaseline = 'middle';
+                                
+                                ctx.shadowColor = 'rgba(0,0,0,0.5)';
+                                ctx.shadowBlur = 3;
+                                ctx.shadowOffsetX = 1;
+                                ctx.shadowOffsetY = 1;
+                                
+                                ctx.fillText(`${value.toFixed(1)}%`, x, y);
+                                ctx.restore();
+                            }
+                        });
+                    });
+                }
+            }]
+        });
+    }
+    
+    updateMaterialChart() {
+        const ctx = document.getElementById('material-chart').getContext('2d');
+        
+        if (this.charts.material) {
+            this.charts.material.destroy();
+        }
+        
+        const materialStats = {};
+        this.selectedMaterials.forEach(material => {
+            const materialBatches = this.filteredData.filter(b => b.normalizedMaterial === material);
+            if (materialBatches.length > 0) {
+                const avgError = _.sumBy(materialBatches, 'errorPercent') / materialBatches.length;
+                const statusCounts = _.countBy(materialBatches, 'status');
+                
+                materialStats[material] = {
+                    avgError,
+                    count: materialBatches.length,
+                    optimal: statusCounts.optimal || 0,
+                    risk: statusCounts.risk || 0,
+                    waste: statusCounts.waste || 0
+                };
+            }
+        });
+        
+        const materials = Object.keys(materialStats);
+        
+        this.charts.material = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: materials,
+                datasets: [{
+                    label: 'Average Error %',
+                    data: materials.map(material => materialStats[material].avgError),
+                    backgroundColor: materials.map((material) => {
+                        const error = materialStats[material].avgError;
+                        if (error <= 0 && error >= -1) return this.colors.optimal + '80';
+                        if (error > 0 && error <= 1) return this.colors.good + '80';
+                        if (error < -1) return this.colors.risk + '80';
+                        return this.colors.waste + '80';
+                    }),
+                    borderColor: materials.map((material) => {
+                        const error = materialStats[material].avgError;
+                        if (error <= 0 && error >= -1) return this.colors.optimal;
+                        if (error > 0 && error <= 1) return this.colors.good;
+                        if (error < -1) return this.colors.risk;
+                        return this.colors.waste;
+                    }),
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        title: {
+                            display: true,
+                            text: 'Average Error %',
+                            font: { weight: 'bold' }
+                        },
+                        ticks: {
+                            callback: value => `${value.toFixed(1)}%`
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Materials',
+                            font: { weight: 'bold' }
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        display: false
+                    },
+                    tooltip: {
+                        callbacks: {
+                            afterLabel: (context) => {
+                                const material = materials[context.dataIndex];
+                                const stats = materialStats[material];
+                                return [
+                                    `Batches: ${stats.count}`,
+                                    `Optimal: ${stats.optimal}`,
+                                    `Risk: ${stats.risk}`,
+                                    `Waste: ${stats.waste}`
+                                ];
+                            }
+                        }
+                    }
+                },
+                onClick: (event, elements) => {
+                    if (elements.length > 0) {
+                        const index = elements[0].index;
+                        const material = materials[index];
+                        this.showMaterialDetails(material);
+                    }
+                }
+            }
+        });
+    }
+    
+    updateTable() {
+        const tableHeader = document.getElementById('table-header');
+        const tableBody = document.getElementById('table-body');
+        
+        tableHeader.innerHTML = '';
+        tableBody.innerHTML = '';
+        
+        // Create header
+        const headers = ['Material', 'Total Batches', 'Avg Error %', 'Optimal', 'Good', 'Risk', 'Waste'];
+        headers.forEach(header => {
+            const th = document.createElement('th');
+            th.className = 'px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider';
+            th.textContent = header;
+            tableHeader.appendChild(th);
+        });
+        
+        <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Concrete Batch Performance Dashboard</title>
+    <meta name="description" content="Advanced concrete batch performance analytics dashboard for multi-region analysis">
+    <meta name="keywords" content="concrete, batch, performance, analytics, dashboard">
+    <meta name="author" content="Concrete Analytics Team">
+    
+    <!-- External Dependencies -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.21/lodash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    
+    <!-- Favicon -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
+    
+    <style>
+        /* Custom Styles */
+        * { 
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; 
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .glass {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .glass-dark {
+            background: rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+        
+        .metric-card {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.85));
+            border-left: 4px solid;
+            transition: all 0.3s ease;
+        }
+        
+        .metric-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
+        }
+        
+        .upload-zone {
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+            border: 2px dashed rgba(255, 255, 255, 0.3);
+            transition: all 0.3s ease;
+        }
+        
+        .upload-zone:hover {
+            border-color: rgba(255, 255, 255, 0.6);
+            background: rgba(255, 255, 255, 0.15);
+        }
+        
+        .upload-zone.dragover {
+            border-color: #60a5fa;
+            background: rgba(96, 165, 250, 0.1);
+            transform: scale(1.02);
+        }
+        
+        .chart-container {
+            position: relative;
+            height: 350px;
+            padding: 20px;
+        }
+        
+        .filter-tag {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            margin: 0.125rem;
+            transition: all 0.2s ease;
+        }
+        
+        .filter-tag:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+        
+        .performance-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .optimal { background: linear-gradient(135deg, #10b981, #065f46); }
+        .good { background: linear-gradient(135deg, #eab308, #ca8a04); }
+        .risk { background: linear-gradient(135deg, #f97316, #ea580c); }
+        .waste { background: linear-gradient(135deg, #ef4444, #dc2626); }
+        
+        .animate-fade-in {
+            animation: fadeIn 0.6s ease-out;
+        }
+        
+        .animate-slide-up {
+            animation: slideUp 0.8s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .loading-dots::after {
+            content: '';
+            animation: dots 1.5s steps(5, end) infinite;
+        }
+        
+        @keyframes dots {
+            0%, 20% { content: ''; }
+            40% { content: '.'; }
+            60% { content: '..'; }
+            80%, 100% { content: '...'; }
+        }
+        
+        .progress-bar {
+            height: 4px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 2px;
+            transform-origin: left;
+            animation: progress 2s ease-in-out;
+        }
+        
+        @keyframes progress {
+            from { transform: scaleX(0); }
+            to { transform: scaleX(1); }
+        }
+        
+        .sidebar {
+            background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.05));
+            backdrop-filter: blur(20px);
+            border-right: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .data-table {
+            background: rgba(255, 255, 255, 0.98);
+            border-radius: 16px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+        }
+        
+        .table-row:hover {
+            background: rgba(102, 126, 234, 0.05);
+            transform: scale(1.001);
+        }
+        
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                top: 0;
+                left: -320px;
+                height: 100vh;
+                width: 320px;
+                z-index: 1000;
+                transition: left 0.3s ease;
+            }
+            
+            .sidebar.open {
+                left: 0;
+            }
+            
+            .chart-container {
+                height: 250px;
+                padding: 10px;
+            }
+        }
+        
+        /* Print Styles */
+        @media print {
+            body {
+                background: white !important;
+            }
+            
+            .sidebar {
+                display: none;
+            }
+            
+            .card {
+                background: white !important;
+                box-shadow: none !important;
+                border: 1px solid #ccc !important;
+            }
+        }
+    </style>
+</head>
+<body class="text-white overflow-x-hidden">
+
+<!-- Mobile Menu Button -->
+<button id="mobile-menu-btn" class="md:hidden fixed top-4 left-4 z-50 bg-white/20 p-2 rounded-lg backdrop-blur">
+    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+    </svg>
+</button>
+
+<div class="min-h-screen flex">
+    <!-- Sidebar -->
+    <div id="sidebar" class="w-80 sidebar p-6 overflow-y-auto">
+        <div class="mb-8">
+            <h1 class="text-2xl font-bold text-white mb-2">Concrete Analytics</h1>
+            <p class="text-white/70 text-sm">Advanced batch performance insights</p>
+            <div class="mt-2 text-xs text-white/50">
+                v1.0 | Multi-Region Dashboard
+            </div>
+        </div>
+
+        <!-- Upload Zone -->
+        <div id="upload-zone" class="upload-zone rounded-2xl p-8 text-center mb-6 cursor-pointer">
+            <input type="file" id="file-input" multiple accept=".xlsx" class="hidden">
+            <div class="text-white/80">
+                <svg class="w-12 h-12 mx-auto mb-4 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p class="font-medium mb-1">Drop Excel files here</p>
+                <p class="text-sm opacity-70">or click to browse</p>
+                <div class="mt-2 text-xs opacity-50">
+                    Supports: .xlsx files with "Batch weights" & "Tickets" sheets
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loading" class="hidden text-center py-4">
+            <div class="inline-block w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin mb-2"></div>
+            <p class="text-sm text-white/80 loading-dots">Processing files</p>
+            <div class="mt-2 bg-white/20 rounded-full h-1">
+                <div class="progress-bar"></div>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div id="controls" class="space-y-4 hidden">
+            <button id="clear-btn" class="w-full bg-red-500/80 hover:bg-red-500 text-white px-4 py-2 rounded-lg transition-all duration-300 flex items-center justify-center">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+                Clear Data
+            </button>
+            
+            <button id="export-btn" class="w-full bg-blue-500/80 hover:bg-blue-500 text-white px-4 py-2 rounded-lg transition-all duration-300 flex items-center justify-center">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                Export Report
+            </button>
+        </div>
+
+        <!-- Filters -->
+        <div id="filters" class="space-y-6 hidden">
+            <div>
+                <h3 class="font-semibold text-white mb-3">Active Filters</h3>
+                <div id="filter-tags" class="flex flex-wrap"></div>
+            </div>
+            
+            <div id="filter-sections" class="space-y-4"></div>
+        </div>
+
+        <!-- Footer -->
+        <div class="mt-8 text-center text-white/40 text-xs">
+            <p>© 2025 Concrete Analytics</p>
+            <p>Built with Chart.js & Tailwind CSS</p>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="flex-1 p-6 md:ml-0">
+        <!-- Welcome Screen -->
+        <div id="welcome" class="flex items-center justify-center h-full">
+            <div class="text-center glass rounded-3xl p-12 max-w-2xl mx-auto">
+                <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-white/20 to-white/10 flex items-center justify-center">
+                    <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                    </svg>
+                </div>
+                <h2 class="text-3xl font-bold text-white mb-4">Welcome to Concrete Analytics</h2>
+                <p class="text-white/80 text-lg mb-6 max-w-md mx-auto">Upload your Excel files to unlock powerful insights into batch performance, material efficiency, and quality metrics across multiple regions.</p>
+                <div class="text-white/60 text-sm space-y-1">
+                    <p>✓ Multi-region analysis (ALLIED vs RK HALL)</p>
+                    <p>✓ Real-time filtering and drill-down capabilities</p>
+                    <p>✓ Interactive visualizations and export functions</p>
+                    <p>✓ Performance categorization and trending</p>
+                </div>
+                
+                <div class="mt-8 p-4 bg-white/10 rounded-lg text-left text-sm text-white/70">
+                    <h4 class="font-semibold mb-2">📁 File Requirements:</h4>
+                    <ul class="space-y-1 text-xs">
+                        <li>• Excel files (.xlsx format)</li>
+                        <li>• "Batch weights" sheet with material data</li>
+                        <li>• "Tickets" sheet with plant and date information</li>
+                        <li>• Naming convention: "REGION MONTH YEAR.xlsx"</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="dashboard" class="hidden animate-fade-in">
+            <!-- Header Stats -->
+            <div class="mb-8">
+                <div class="flex justify-between items-center mb-6">
+                    <div>
+                        <h2 class="text-3xl font-bold text-white">Performance Dashboard</h2>
+                        <p class="text-white/70 text-sm mt-1" id="dashboard-subtitle">Real-time concrete batch analytics</p>
+                    </div>
+                    <div class="flex space-x-2">
+                        <button id="refresh-btn" class="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                            </svg>
+                        </button>
+                        <button id="fullscreen-btn" class="bg-white/20 hover:bg-white/30 p-2 rounded-lg transition-colors">
+                            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="metric-cards" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+            </div>
+
+            <!-- Charts Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+                <!-- Weekly Trend -->
+                <div class="card rounded-2xl p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-gray-800">Weekly Performance Trend</h3>
+                        <div class="text-xs text-gray-500">
+                            Average Error % by Week
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="trend-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Performance Distribution -->
+                <div class="card rounded-2xl p-6">
+                    <div class="flex justify-between items-center mb-4">
+                        <h3 class="text-xl font-bold text-gray-800">Performance Distribution</h3>
+                        <div class="text-xs text-gray-500">
+                            Tolerance Categories
+                        </div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="distribution-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Material Performance -->
+            <div class="card rounded-2xl p-6 mb-8">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-xl font-bold text-gray-800">Material Performance Analysis</h3>
+                    <div class="text-xs text-gray-500">
+                        Click bars for detailed breakdown
+                    </div>
+                </div>
+                <div class="chart-container" style="height: 400px;">
+                    <canvas id="material-chart"></canvas>
+                </div>
+            </div>
+
+            <!-- Detailed Table -->
+            <div class="data-table">
+                <div class="p-6 border-b border-gray-100">
+                    <div class="flex justify-between items-center">
+                        <h3 class="text-xl font-bold text-gray-800">Detailed Performance Data</h3>
+                        <button id="download-csv" class="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm transition-colors">
+                            Download CSV
+                        </button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50">
+                            <tr id="table-header"></tr>
+                        </thead>
+                        <tbody id="table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Material Detail Modal -->
+<div id="modal" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 hidden z-50">
+    <div class="card rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+        <div class="p-6 border-b border-gray-100 flex justify-between items-center">
+            <h3 id="modal-title" class="text-2xl font-bold text-gray-800"></h3>
+            <button id="modal-close" class="text-gray-400 hover:text-gray-600 transition-colors">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+        <div class="p-6 overflow-y-auto max-h-[70vh]">
+            <div class="overflow-x-auto">
+                <table class="w-full">
+                    <thead class="bg-gray-50 sticky top-0">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Plant</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Ticket #</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Target (LB)</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actual (LB)</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Error %</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modal-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+class ConcreteAnalyzer {
+    constructor() {
+        this.data = [];
+        this.filteredData = [];
+        this.materials = new Set();
+        this.regions = new Set();
+        this.plants = new Set();
+        this.months = new Set();
+        
+        this.selectedMaterials = [];
+        this.selectedRegions = [];
+        this.selectedPlants = [];
+        this.selectedMonth = '';
+        
+        this.colors = {
+            optimal: '#10b981',
+            good: '#eab308',
+            risk: '#f97316',
+            waste: '#ef4444',
+            primary: '#667eea',
+            secondary: '#764ba2'
+        };
+        
+        this.charts = {};
+        this.initializeEventListeners();
+    }
+    
+    initializeEventListeners() {
+        const uploadZone = document.getElementById('upload-zone');
+        const fileInput = document.getElementById('file-input');
+        
+        uploadZone.addEventListener('click', () => fileInput.click());
+        uploadZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadZone.classList.add('dragover');
+        });
+        uploadZone.addEventListener('dragleave', () => {
+            uploadZone.classList.remove('dragover');
+        });
+        uploadZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadZone.classList.remove('dragover');
+            this.handleFiles(e.dataTransfer.files);
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            this.handleFiles(e.target.files);
+        });
+        
+        document.getElementById('clear-btn').addEventListener('click', () => {
+            this.clearData();
+        });
+        
+        document.getElementById('modal-close').addEventListener('click', () => {
+            document.getElementById('modal').classList.add('hidden');
+        });
+        
+        // Mobile menu toggle
+        document.getElementById('mobile-menu-btn').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.toggle('open');
+        });
+        
+        // Export functionality
+        document.getElementById('export-btn').addEventListener('click', () => {
+            this.exportReport();
+        });
+        
+        document.getElementById('download-csv').addEventListener('click', () => {
+            this.downloadCSV();
+        });
+        
+        // Refresh button
+        document.getElementById('refresh-btn').addEventListener('click', () => {
+            this.updateVisualizations();
+        });
+        
+        // Fullscreen toggle
+        document.getElementById('fullscreen-btn').addEventListener('click', () => {
+            this.toggleFullscreen();
+        });
+    }
+    
+    async handleFiles(files) {
+        if (files.length === 0) return;
+        
+        this.showLoading();
+        this.data = [];
+        
+        for (let file of files) {
+            await this.processFile(file);
+        }
+        
+        this.updateMasterLists();
+        this.hideLoading();
+        this.showDashboard();
+        this.updateVisualizations();
+    }
+    
+    async processFile(file) {
+        try {
+            const buffer = await file.arrayBuffer();
+            const workbook = XLSX.read(buffer);
+            
+            if (!workbook.SheetNames.includes('Batch weights') || !workbook.SheetNames.includes('Tickets')) {
+                throw new Error('Missing required sheets');
+            }
+            
+            const batchData = XLSX.utils.sheet_to_json(workbook.Sheets['Batch weights']);
+            const ticketData = XLSX.utils.sheet_to_json(workbook.Sheets['Tickets']);
+            
+            const regionName = this.extractRegionName(file.name);
+            const ticketMap = this.createTicketMap(ticketData);
+            
+            const processedBatches = this.processBatchData(batchData, ticketMap, regionName);
+            this.data.push(...processedBatches);
+            
+        } catch (error) {
+            console.error('Error processing file:', file.name, error);
+        }
+    }
+    
+    extractRegionName(filename) {
+        const upperName = filename.toUpperCase();
+        
+        // Handle specific cases first
+        if (upperName.startsWith('JUNE 2025.XLSX')) return 'ALLIED';
+        
+        // Extract region name before month/year patterns
+        const patterns = [
+            /^(.*?)\s*(?:JAN|FEB|MARCH|APRIL|MAY|JUNE|JULY|AUG|SEPT|OCT|NOV|DEC)/i,
+            /^(.*?)\s*\d{4}/,  // Match year
+            /^(.*?)\s*(?:REGION|PLANT)/i
+        ];
+        
+        for (const pattern of patterns) {
+            const match = filename.match(pattern);
+            if (match && match[1].trim()) {
+                let regionName = match[1].trim().toUpperCase();
+                
+                // Clean up common variations
+                regionName = regionName
+                    .replace(/\s+/g, ' ')  // Multiple spaces to single space
+                    .replace(/\.$/, '')     // Remove trailing period
+                    .trim();
+                
+                // Don't return empty strings
+                if (regionName.length > 0) {
+                    return regionName;
+                }
+            }
+        }
+        
+        // Fallback: use everything before the first space or period
+        const fallbackMatch = filename.match(/^([^.\s]+)/);
+        if (fallbackMatch && fallbackMatch[1]) {
+            return fallbackMatch[1].toUpperCase();
+        }
+        
+        // Final fallback: use filename without extension
+        return filename.replace(/\.[^/.]+$/, "").toUpperCase();
+    }
+    
+    createTicketMap(ticketData) {
+        const map = new Map();
+        ticketData.forEach(ticket => {
+            const plantName = ticket['Plant name'] || ticket['Plant Name'] || ticket['Plant'] || 'Unknown Plant';
+            map.set(ticket['Ticket number'], {
+                date: ticket['Ticketed'],
+                plant: plantName
+            });
+        });
+        return map;
+    }
+    
+    processBatchData(batchData, ticketMap, regionName) {
+        const exclusions = new Set(['WATER', 'AEA', 'MRWR', 'H.S.1 HOUR', 'RETARDER', 'AIR', 'WTR', 
