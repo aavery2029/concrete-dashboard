@@ -336,7 +336,9 @@ class ConcreteAnalyzer {
         this.selectedMaterials = [];
         this.selectedRegions = [];
         this.selectedPlants = [];
-        this.selectedMonth = '';
+        this.selectedStartMonth = '';
+        this.selectedEndMonth = '';
+        this.viewMode = 'aggregated'; // 'aggregated' or 'breakdown'
         
         this.colors = {
             optimal: '#10b981',
@@ -548,7 +550,12 @@ class ConcreteAnalyzer {
         this.selectedMaterials = Array.from(this.materials);
         this.selectedRegions = Array.from(this.regions);
         this.selectedPlants = Array.from(this.plants);
-        this.selectedMonth = Array.from(this.months).sort().pop() || '';
+        
+        // Set default date range: latest month to latest month
+        const sortedMonths = Array.from(this.months).sort();
+        const latestMonth = sortedMonths.pop() || '';
+        this.selectedStartMonth = latestMonth;
+        this.selectedEndMonth = latestMonth;
         
         this.updateFilters();
     }
@@ -561,8 +568,8 @@ class ConcreteAnalyzer {
         filterSections.innerHTML = '';
         
         if (this.months.size > 0) {
-            const monthSection = this.createFilterSection('Month', Array.from(this.months).sort().reverse(), this.selectedMonth, 'month', true);
-            filterSections.appendChild(monthSection);
+            const dateRangeSection = this.createDateRangeSection();
+            filterSections.appendChild(dateRangeSection);
         }
         
         if (this.regions.size > 0) {
@@ -581,6 +588,157 @@ class ConcreteAnalyzer {
         }
         
         this.updateFilterTags();
+    }
+    
+    createDateRangeSection() {
+        const section = document.createElement('div');
+        section.className = 'glass-dark rounded-xl p-4';
+        
+        const header = document.createElement('h4');
+        header.className = 'font-medium text-white mb-3';
+        header.textContent = 'Date Range';
+        section.appendChild(header);
+        
+        // View mode toggle
+        const viewModeContainer = document.createElement('div');
+        viewModeContainer.className = 'mb-4';
+        
+        const viewModeLabel = document.createElement('label');
+        viewModeLabel.className = 'text-white/90 text-sm block mb-2';
+        viewModeLabel.textContent = 'View Mode:';
+        viewModeContainer.appendChild(viewModeLabel);
+        
+        const viewModeToggle = document.createElement('div');
+        viewModeToggle.className = 'flex space-x-2';
+        
+        const aggregatedBtn = document.createElement('button');
+        aggregatedBtn.className = `flex-1 px-3 py-1 rounded-lg text-sm transition-colors ${
+            this.viewMode === 'aggregated' ? 'bg-blue-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'
+        }`;
+        aggregatedBtn.textContent = 'Combined';
+        aggregatedBtn.addEventListener('click', () => {
+            this.viewMode = 'aggregated';
+            this.updateDateRangeUI();
+            this.updateVisualizations();
+        });
+        
+        const breakdownBtn = document.createElement('button');
+        breakdownBtn.className = `flex-1 px-3 py-1 rounded-lg text-sm transition-colors ${
+            this.viewMode === 'breakdown' ? 'bg-blue-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'
+        }`;
+        breakdownBtn.textContent = 'Monthly';
+        breakdownBtn.addEventListener('click', () => {
+            this.viewMode = 'breakdown';
+            this.updateDateRangeUI();
+            this.updateVisualizations();
+        });
+        
+        viewModeToggle.appendChild(aggregatedBtn);
+        viewModeToggle.appendChild(breakdownBtn);
+        viewModeContainer.appendChild(viewModeToggle);
+        section.appendChild(viewModeContainer);
+        
+        // Date range selectors
+        const dateRangeContainer = document.createElement('div');
+        dateRangeContainer.className = 'space-y-3';
+        
+        // Start date
+        const startContainer = document.createElement('div');
+        const startLabel = document.createElement('label');
+        startLabel.className = 'text-white/90 text-sm block mb-1';
+        startLabel.textContent = 'Start Month:';
+        
+        const startSelect = document.createElement('select');
+        startSelect.className = 'w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white';
+        startSelect.id = 'start-month-select';
+        
+        const sortedMonths = Array.from(this.months).sort();
+        sortedMonths.forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = month;
+            option.selected = this.selectedStartMonth === month;
+            option.className = 'text-gray-800';
+            startSelect.appendChild(option);
+        });
+        
+        startSelect.addEventListener('change', () => {
+            this.selectedStartMonth = startSelect.value;
+            this.validateDateRange();
+            this.updateVisualizations();
+            this.updateFilterTags();
+        });
+        
+        startContainer.appendChild(startLabel);
+        startContainer.appendChild(startSelect);
+        
+        // End date
+        const endContainer = document.createElement('div');
+        const endLabel = document.createElement('label');
+        endLabel.className = 'text-white/90 text-sm block mb-1';
+        endLabel.textContent = 'End Month:';
+        
+        const endSelect = document.createElement('select');
+        endSelect.className = 'w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-white';
+        endSelect.id = 'end-month-select';
+        
+        sortedMonths.forEach(month => {
+            const option = document.createElement('option');
+            option.value = month;
+            option.textContent = month;
+            option.selected = this.selectedEndMonth === month;
+            option.className = 'text-gray-800';
+            endSelect.appendChild(option);
+        });
+        
+        endSelect.addEventListener('change', () => {
+            this.selectedEndMonth = endSelect.value;
+            this.validateDateRange();
+            this.updateVisualizations();
+            this.updateFilterTags();
+        });
+        
+        endContainer.appendChild(endLabel);
+        endContainer.appendChild(endSelect);
+        
+        dateRangeContainer.appendChild(startContainer);
+        dateRangeContainer.appendChild(endContainer);
+        section.appendChild(dateRangeContainer);
+        
+        return section;
+    }
+    
+    updateDateRangeUI() {
+        // Update view mode buttons
+        const aggregatedBtn = document.querySelector('.glass-dark button:nth-child(1)');
+        const breakdownBtn = document.querySelector('.glass-dark button:nth-child(2)');
+        
+        if (aggregatedBtn && breakdownBtn) {
+            if (this.viewMode === 'aggregated') {
+                aggregatedBtn.className = 'flex-1 px-3 py-1 rounded-lg text-sm transition-colors bg-blue-500 text-white';
+                breakdownBtn.className = 'flex-1 px-3 py-1 rounded-lg text-sm transition-colors bg-white/10 text-white hover:bg-white/20';
+            } else {
+                aggregatedBtn.className = 'flex-1 px-3 py-1 rounded-lg text-sm transition-colors bg-white/10 text-white hover:bg-white/20';
+                breakdownBtn.className = 'flex-1 px-3 py-1 rounded-lg text-sm transition-colors bg-blue-500 text-white';
+            }
+        }
+    }
+    
+    validateDateRange() {
+        const sortedMonths = Array.from(this.months).sort();
+        const startIndex = sortedMonths.indexOf(this.selectedStartMonth);
+        const endIndex = sortedMonths.indexOf(this.selectedEndMonth);
+        
+        // Auto-correct: if end is before start, set end to start
+        if (endIndex < startIndex) {
+            this.selectedEndMonth = this.selectedStartMonth;
+            
+            // Update the end select dropdown
+            const endSelect = document.getElementById('end-month-select');
+            if (endSelect) {
+                endSelect.value = this.selectedEndMonth;
+            }
+        }
     }
     
     createFilterSection(title, items, selected, type, isSelect = false) {
@@ -691,10 +849,11 @@ class ConcreteAnalyzer {
         filterTags.innerHTML = '';
         
         const tags = [
-            { label: `Month: ${this.selectedMonth}`, type: 'month' },
+            { label: `Period: ${this.selectedStartMonth}${this.selectedStartMonth !== this.selectedEndMonth ? ` to ${this.selectedEndMonth}` : ''}`, type: 'period' },
             { label: `Regions: ${this.selectedRegions.length}`, type: 'regions' },
             { label: `Plants: ${this.selectedPlants.length}`, type: 'plants' },
-            { label: `Materials: ${this.selectedMaterials.length}`, type: 'materials' }
+            { label: `Materials: ${this.selectedMaterials.length}`, type: 'materials' },
+            { label: `View: ${this.viewMode === 'aggregated' ? 'Combined' : 'Monthly'}`, type: 'view' }
         ];
         
         tags.forEach(tag => {
@@ -706,12 +865,22 @@ class ConcreteAnalyzer {
     }
     
     filterData() {
+        const selectedMonths = this.getSelectedMonthsRange();
+        
         this.filteredData = this.data.filter(item => 
             this.selectedRegions.includes(item.region) &&
             this.selectedPlants.includes(item.plant) &&
             this.selectedMaterials.includes(item.normalizedMaterial) &&
-            item.monthYear === this.selectedMonth
+            selectedMonths.includes(item.monthYear)
         );
+    }
+    
+    getSelectedMonthsRange() {
+        const sortedMonths = Array.from(this.months).sort();
+        const startIndex = sortedMonths.indexOf(this.selectedStartMonth);
+        const endIndex = sortedMonths.indexOf(this.selectedEndMonth);
+        
+        return sortedMonths.slice(startIndex, endIndex + 1);
     }
     
     updateVisualizations() {
@@ -726,7 +895,10 @@ class ConcreteAnalyzer {
         const subtitle = document.getElementById('dashboard-subtitle');
         if (this.filteredData.length > 0) {
             const uniquePlants = new Set(this.filteredData.map(d => d.plant)).size;
-            subtitle.textContent = `${this.filteredData.length.toLocaleString()} batches • ${uniquePlants} plants • ${this.selectedMonth}`;
+            const selectedMonths = this.getSelectedMonthsRange();
+            const periodText = selectedMonths.length === 1 ? selectedMonths[0] : 
+                `${selectedMonths[0]} to ${selectedMonths[selectedMonths.length - 1]}`;
+            subtitle.textContent = `${this.filteredData.length.toLocaleString()} batches • ${uniquePlants} plants • ${periodText}`;
         }
     }
     
@@ -817,68 +989,115 @@ class ConcreteAnalyzer {
             this.charts.trend.destroy();
         }
         
-        const weeklyData = _.groupBy(this.filteredData, 'weekStart');
-        const weeks = Object.keys(weeklyData).sort();
-        const datasets = [];
+        let datasets = [];
+        let weeks = [];
+        let weeklyData = {};
         
-        if (this.selectedPlants.length <= 4) {
-            const plantColors = this.generateColorPalette(this.selectedPlants.length);
+        if (this.viewMode === 'aggregated') {
+            // Combined view - treat all data as one period
+            weeklyData = _.groupBy(this.filteredData, 'weekStart');
+            weeks = Object.keys(weeklyData).sort();
             
-            this.selectedPlants.forEach((plant, index) => {
-                const plantData = weeks.map(week => {
-                    const weekBatches = weeklyData[week]?.filter(b => b.plant === plant) || [];
+            if (this.selectedPlants.length <= 4) {
+                const plantColors = this.generateColorPalette(this.selectedPlants.length);
+                
+                this.selectedPlants.forEach((plant, index) => {
+                    const plantData = weeks.map(week => {
+                        const weekBatches = weeklyData[week]?.filter(b => b.plant === plant) || [];
+                        return weekBatches.length > 0 ? 
+                            _.sumBy(weekBatches, 'errorPercent') / weekBatches.length : null;
+                    });
+                    
+                    const cleanPlantName = plant.replace(/PLANT \d+ - /gi, '').replace(/\(\d+\)/g, '').trim();
+                    
+                    datasets.push({
+                        label: cleanPlantName,
+                        data: plantData,
+                        borderColor: plantColors[index],
+                        backgroundColor: plantColors[index] + '20',
+                        borderWidth: 3,
+                        tension: 0.4,
+                        fill: false,
+                        pointRadius: 4,
+                        pointHoverRadius: 6
+                    });
+                });
+            } else {
+                const regionData = {};
+                
+                this.filteredData.forEach(batch => {
+                    let region = batch.region || 'Unknown';
+                    region = region.trim().toUpperCase();
+                    if (region.includes('ALLIED')) region = 'ALLIED';
+                    if (region.includes('RK HALL') || region.includes('HALL')) region = 'RK HALL';
+                    
+                    if (!regionData[region]) regionData[region] = {};
+                    const week = batch.weekStart;
+                    if (!regionData[region][week]) regionData[region][week] = [];
+                    regionData[region][week].push(batch.errorPercent);
+                });
+                
+                const regionColors = this.generateColorPalette(Object.keys(regionData).length);
+                
+                Object.keys(regionData).forEach((region, index) => {
+                    const regionWeeklyAvg = weeks.map(week => {
+                        const weekErrors = regionData[region][week];
+                        return weekErrors && weekErrors.length > 0 ? 
+                            _.sum(weekErrors) / weekErrors.length : null;
+                    });
+                    
+                    datasets.push({
+                        label: `${region} Region`,
+                        data: regionWeeklyAvg,
+                        borderColor: regionColors[index],
+                        backgroundColor: regionColors[index] + '20',
+                        borderWidth: 4,
+                        tension: 0.4,
+                        fill: false,
+                        pointRadius: 5,
+                        pointHoverRadius: 8
+                    });
+                });
+            }
+        } else {
+            // Monthly breakdown view
+            const selectedMonths = this.getSelectedMonthsRange();
+            const monthColors = this.generateColorPalette(selectedMonths.length);
+            
+            selectedMonths.forEach((month, monthIndex) => {
+                const monthData = this.filteredData.filter(b => b.monthYear === month);
+                const monthWeeklyData = _.groupBy(monthData, 'weekStart');
+                const monthWeeks = Object.keys(monthWeeklyData).sort();
+                
+                // Extend weeks array to include all weeks from all months
+                monthWeeks.forEach(week => {
+                    if (!weeks.includes(week)) weeks.push(week);
+                });
+                
+                // Calculate average error for this month across all selected regions/plants
+                const monthlyAvg = monthWeeks.map(week => {
+                    const weekBatches = monthWeeklyData[week] || [];
                     return weekBatches.length > 0 ? 
                         _.sumBy(weekBatches, 'errorPercent') / weekBatches.length : null;
                 });
                 
-                const cleanPlantName = plant.replace(/PLANT \d+ - /gi, '').replace(/\(\d+\)/g, '').trim();
+                // Create full data array with nulls for weeks not in this month
+                weeks.sort();
+                const fullMonthData = weeks.map(week => {
+                    const weekIndex = monthWeeks.indexOf(week);
+                    return weekIndex >= 0 ? monthlyAvg[weekIndex] : null;
+                });
                 
                 datasets.push({
-                    label: cleanPlantName,
-                    data: plantData,
-                    borderColor: plantColors[index],
-                    backgroundColor: plantColors[index] + '20',
+                    label: month,
+                    data: fullMonthData,
+                    borderColor: monthColors[monthIndex],
+                    backgroundColor: monthColors[monthIndex] + '20',
                     borderWidth: 3,
                     tension: 0.4,
                     fill: false,
                     pointRadius: 4,
                     pointHoverRadius: 6
-                });
-            });
-        } else {
-            const regionData = {};
-            
-            this.filteredData.forEach(batch => {
-                let region = batch.region || 'Unknown';
-                region = region.trim().toUpperCase();
-                if (region.includes('ALLIED')) region = 'ALLIED';
-                if (region.includes('RK HALL') || region.includes('HALL')) region = 'RK HALL';
-                
-                if (!regionData[region]) regionData[region] = {};
-                const week = batch.weekStart;
-                if (!regionData[region][week]) regionData[region][week] = [];
-                regionData[region][week].push(batch.errorPercent);
-            });
-            
-            const regionColors = this.generateColorPalette(Object.keys(regionData).length);
-            
-            Object.keys(regionData).forEach((region, index) => {
-                const regionWeeklyAvg = weeks.map(week => {
-                    const weekErrors = regionData[region][week];
-                    return weekErrors && weekErrors.length > 0 ? 
-                        _.sum(weekErrors) / weekErrors.length : null;
-                });
-                
-                datasets.push({
-                    label: `${region} Region`,
-                    data: regionWeeklyAvg,
-                    borderColor: regionColors[index],
-                    backgroundColor: regionColors[index] + '20',
-                    borderWidth: 4,
-                    tension: 0.4,
-                    fill: false,
-                    pointRadius: 5,
-                    pointHoverRadius: 8
                 });
             });
         }
@@ -1059,16 +1278,42 @@ class ConcreteAnalyzer {
                             if (value >= 5) {
                                 const x = bar.x;
                                 const y = bar.y + (bar.height / 2);
+                                
                                 ctx.save();
-                                ctx.fillStyle = '#ffffff';
-                                ctx.font = 'bold 12px Inter, sans-serif';
+                                
+                                // Smart contrast: use dark text on light colors, light text on dark colors
+                                const color = dataset.backgroundColor;
+                                let textColor = '#000000';
+                                
+                                if (color === '#10b981' || color === '#eab308') { // optimal, good
+                                    textColor = '#000000';
+                                } else { // risk, waste
+                                    textColor = '#ffffff';
+                                }
+                                
+                                ctx.fillStyle = textColor;
+                                ctx.font = 'bold 11px Inter, sans-serif';
                                 ctx.textAlign = 'center';
                                 ctx.textBaseline = 'middle';
-                                ctx.shadowColor = 'rgba(0,0,0,0.5)';
-                                ctx.shadowBlur = 3;
-                                ctx.shadowOffsetX = 1;
-                                ctx.shadowOffsetY = 1;
-                                ctx.fillText(`${value.toFixed(1)}%`, x, y);
+                                
+                                // Add subtle shadow for better readability
+                                if (textColor === '#ffffff') {
+                                    ctx.shadowColor = 'rgba(0,0,0,0.7)';
+                                    ctx.shadowBlur = 2;
+                                    ctx.shadowOffsetX = 1;
+                                    ctx.shadowOffsetY = 1;
+                                } else {
+                                    ctx.shadowColor = 'rgba(255,255,255,0.7)';
+                                    ctx.shadowBlur = 2;
+                                    ctx.shadowOffsetX = 1;
+                                    ctx.shadowOffsetY = 1;
+                                }
+                                
+                                // Only show if bar is wide enough (prevent text overflow)
+                                if (bar.width > 40) {
+                                    ctx.fillText(`${value.toFixed(1)}%`, x, y);
+                                }
+                                
                                 ctx.restore();
                             }
                         });
